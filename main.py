@@ -32,8 +32,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
+
 from services.analyzer import AnalyzerService
 from services.econometrics import EconometricsService
+import numpy as np
 
 # =========================================
 # UYGULAMA AYARLARI
@@ -253,6 +255,8 @@ def run_econometrics(request: EconometricsRequest):
             dependent_index=dep_idx,
         )
 
+        result = sanitize_for_json(result)
+
         return {
             "success": True,
             "method": method,
@@ -266,6 +270,26 @@ def run_econometrics(request: EconometricsRequest):
             status_code=500,
             detail=f"Ekonometrik analiz hatası: {str(e)}",
         )
+
+def sanitize_for_json(obj):
+    """
+    Numpy tiplerini (bool_, int64, float64 vb.) standart Python tiplerine çevirir.
+    Böylece FastAPI JSON'a dönüştürürken TypeError vermez.
+    """
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(i) for i in obj]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return sanitize_for_json(obj.tolist())
+    else:
+        return obj
 
 
 # =========================================
