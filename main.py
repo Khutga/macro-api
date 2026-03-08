@@ -36,6 +36,7 @@ from typing import Optional, List
 from services.analyzer import AnalyzerService
 from services.econometrics import EconometricsService
 import numpy as np
+import math
 
 # =========================================
 # UYGULAMA AYARLARI
@@ -273,8 +274,8 @@ def run_econometrics(request: EconometricsRequest):
 
 def sanitize_for_json(obj):
     """
-    Numpy tiplerini (bool_, int64, float64 vb.) standart Python tiplerine çevirir.
-    Böylece FastAPI JSON'a dönüştürürken TypeError vermez.
+    Numpy tiplerini (bool_, int64) ve NaN/Inf gibi geçersiz float değerlerini 
+    JSON'un anlayabileceği standart Python tiplerine çevirir.
     """
     if isinstance(obj, dict):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
@@ -284,7 +285,10 @@ def sanitize_for_json(obj):
         return bool(obj)
     elif isinstance(obj, np.integer):
         return int(obj)
-    elif isinstance(obj, np.floating):
+    elif isinstance(obj, (float, np.floating)):
+        # NaN (Not a Number) veya Infinity (Sonsuz) kontrolü
+        if math.isnan(obj) or math.isinf(obj):
+            return None  # Flutter'a "null" olarak gider
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return sanitize_for_json(obj.tolist())
