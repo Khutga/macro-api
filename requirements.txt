@@ -1,0 +1,15 @@
+# === Temel ===
+fastapi==0.115.0
+uvicorn==0.30.0
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.13.1
+pydantic==2.8.0
+
+# === Ekonometri (Tez Modülü) ===
+statsmodels==0.14.2     # Birim kök, VAR, VECM, ARDL, OLS, Granger
+arch==7.0.0             # GARCH volatilite modelleri
+pingouin==0.5.4         # Kısmi korelasyon, ileri istatistik
+
+# === Opsiyonel (Panel Veri) ===
+# linearmodels==6.0     # Sabit/rassal etkiler, Hausman testi — gerekirse açın
