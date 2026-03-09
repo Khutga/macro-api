@@ -103,7 +103,7 @@ class EconometricsService:
     #  1. BİRİM KÖK TESTLERİ
     # ═══════════════════════════════════════════
 
-    def unit_root_tests(self, series_data: dict, params: dict = {}) -> dict:
+    def unit_root_tests(self, series_data: dict, params: dict={}) -> dict:
         """
         Kapsamlı birim kök analizi: ADF + PP + KPSS
 
@@ -241,7 +241,7 @@ class EconometricsService:
     # ═══════════════════════════════════════════
 
     def cointegration_test(
-        self, series_a: dict, series_b: dict, params: dict = {}
+        self, series_a: dict, series_b: dict, params: dict={}
     ) -> dict:
         """
         Eşbütünleşme testleri:
@@ -356,7 +356,7 @@ class EconometricsService:
     # ═══════════════════════════════════════════
 
     def granger_causality(
-        self, series_list: List[dict], params: dict = {}
+        self, series_list: List[dict], params: dict={}
     ) -> dict:
         """
         Granger nedensellik testi.
@@ -440,7 +440,7 @@ class EconometricsService:
             results["summary_tr"] = (
                 f"Granger nedensellik testi sonuçlarına göre şu nedensellik ilişkileri "
                 f"tespit edilmiştir (%{int(significance * 100)} anlamlılık düzeyinde):\n"
-                + "\n".join(f"  • {r}" for r in causal_relations)
+                +"\n".join(f"  • {r}" for r in causal_relations)
             )
         else:
             results["summary_tr"] = (
@@ -454,7 +454,9 @@ class EconometricsService:
     #  4. VAR MODELİ
     # ═══════════════════════════════════════════
 
-    def var_model(self, series_list: List[dict], params: dict = {}) -> dict:
+    # ═══════════════════════════════════════════
+
+    def var_model(self, series_list: List[dict], params: dict={}) -> dict:
         """
         VAR (Vector Autoregression) modeli.
 
@@ -469,7 +471,7 @@ class EconometricsService:
         irf_periods = params.get("irf_periods", 12)
 
         if len(df) < max_lag + 10:
-            raise ValueError("VAR modeli için yetersiz gözlem.")
+            raise ValueError(f"VAR modeli için yetersiz gözlem ({len(df)}). En az {max_lag + 10} gerekli.")
 
         # Durağanlık kontrolü - gerekirse fark al
         diff_applied = params.get("diff", False)
@@ -479,22 +481,28 @@ class EconometricsService:
         model = VAR(df)
 
         # ── Optimal gecikme seçimi ──
+        lag_summary = {}
+        selected_lag = min(2, max_lag)
         try:
-            lag_order = model.select_order(maxlags=min(max_lag, len(df) // 5))
+            max_possible_lag = min(max_lag, (len(df) // 5) - 1)
+            if max_possible_lag < 1:
+                max_possible_lag = 1
+            lag_order = model.select_order(maxlags=max_possible_lag)
             lag_summary = {
-                "aic": int(lag_order.aic),
-                "bic": int(lag_order.bic),
-                "hqic": int(lag_order.hqic),
-                "fpe": int(lag_order.fpe) if lag_order.fpe is not None else None,
+                "aic": int(lag_order.aic) if lag_order.aic is not None else None,
+                "bic": int(lag_order.bic) if lag_order.bic is not None else None,
+                "hqic": int(lag_order.hqic) if lag_order.hqic is not None else None,
             }
-            selected_lag = lag_order.aic
-        except Exception:
-            lag_summary = {}
-            selected_lag = min(2, max_lag)
+            selected_lag = max(1, lag_order.aic if lag_order.aic is not None else 1)
+        except Exception as e:
+            lag_summary = {"error": str(e)}
 
         optimal_lag = params.get("lag", selected_lag)
         if optimal_lag < 1:
             optimal_lag = 1
+        # Lag çok büyükse düşür
+        if optimal_lag >= len(df) // 3:
+            optimal_lag = max(1, len(df) // 4)
 
         # ── Model tahmini ──
         var_result = model.fit(maxlags=optimal_lag)
@@ -509,41 +517,87 @@ class EconometricsService:
             "equations": {},
         }
 
-        # Her denklem için sonuçlar
-        for i, col in enumerate(df.columns):
-            eq = var_result.summary().results[i] if hasattr(var_result.summary(), 'results') else None
-            dw = round(float(durbin_watson(var_result.resid[:, i])), 4)
+        # ── Her denklem için sonuçlar ──
+        try:
+            for i, col in enumerate(df.columns):
+                dw = round(float(durbin_watson(var_result.resid[:, i])), 4)
 
-            coefs = {}
-            for name, val in zip(var_result.params.index, var_result.params.iloc[:, i]):
-                pval_col = var_result.pvalues.iloc[:, i]
-                idx = list(var_result.params.index).index(name)
-                p = float(pval_col.iloc[idx])
-                coefs[name] = {
-                    "coefficient": round(float(val), 6),
-                    "p_value": round(p, 4),
-                    "significant": p < 0.05,
-                    "stars": self._significance_stars(p),
+                coefs = {}
+                try:
+                    param_names = var_result.params.index.tolist()
+                    param_values = var_result.params.iloc[:, i]
+                    pval_values = var_result.pvalues.iloc[:, i]
+
+                    for k, name in enumerate(param_names):
+                        coef_val = float(param_values.iloc[k])
+                        p_val = float(pval_values.iloc[k])
+                        coefs[str(name)] = {
+                            "coefficient": round(coef_val, 6),
+                            "p_value": round(p_val, 4),
+                            "significant": p_val < 0.05,
+                            "stars": self._significance_stars(p_val),
+                        }
+                except Exception as ce:
+                    coefs = {"error": str(ce)}
+
+                # R² güvenli erişim
+                r_sq = 0.0
+                try:
+                    if hasattr(var_result, 'rsquared'):
+                        r_sq = float(var_result.rsquared[i])
+                except Exception:
+                    pass
+
+                result["equations"][col] = {
+                    "r_squared": round(r_sq, 4),
+                    "durbin_watson": dw,
+                    "coefficients": coefs,
                 }
-
-            result["equations"][col] = {
-                "r_squared": round(float(var_result.rsquared[i] if hasattr(var_result, 'rsquared') else 0), 4),
-                "durbin_watson": dw,
-                "coefficients": coefs,
-            }
+        except Exception as e:
+            result["equations"] = {"error": str(e)}
 
         # ── IRF (Etki-Tepki) ──
         try:
             irf = var_result.irf(irf_periods)
             irf_data = {}
-            for i, shock_var in enumerate(df.columns):
-                for j, response_var in enumerate(df.columns):
+            n_vars = len(df.columns)
+
+            for i in range(n_vars):
+                shock_var = df.columns[i]
+                for j in range(n_vars):
+                    response_var = df.columns[j]
                     key = f"{shock_var}_to_{response_var}"
-                    irf_data[key] = {
-                        "values": [round(float(v), 6) for v in irf.irfs[:, j, i]],
-                        "lower": [round(float(v), 6) for v in irf.ci[:, j, i, 0]] if irf.ci is not None else None,
-                        "upper": [round(float(v), 6) for v in irf.ci[:, j, i, 1]] if irf.ci is not None else None,
-                    }
+
+                    # IRF değerleri — irfs shape: (periods+1, n_vars, n_vars)
+                    try:
+                        irf_values = []
+                        for t in range(irf.irfs.shape[0]):
+                            irf_values.append(round(float(irf.irfs[t][j][i]), 6))
+                    except (IndexError, TypeError):
+                        irf_values = []
+
+                    # Güven aralığı — her zaman mevcut olmayabilir
+                    lower_values = None
+                    upper_values = None
+                    try:
+                        if hasattr(irf, 'ci') and irf.ci is not None:
+                            ci = irf.ci
+                            lower_values = []
+                            upper_values = []
+                            for t in range(ci.shape[0]):
+                                lower_values.append(round(float(ci[t][j][i][0]), 6))
+                                upper_values.append(round(float(ci[t][j][i][1]), 6))
+                    except Exception:
+                        lower_values = None
+                        upper_values = None
+
+                    if irf_values:
+                        irf_data[key] = {
+                            "values": irf_values,
+                            "lower": lower_values,
+                            "upper": upper_values,
+                        }
+
             result["irf"] = {"periods": irf_periods, "responses": irf_data}
         except Exception as e:
             result["irf"] = {"error": str(e)}
@@ -552,15 +606,29 @@ class EconometricsService:
         try:
             fevd = var_result.fevd(irf_periods)
             fevd_data = {}
-            for i, col in enumerate(df.columns):
-                decomp = fevd.decomp[i]  # shape: (periods, n_vars)
-                fevd_data[col] = {
-                    "periods": list(range(1, irf_periods + 1)),
-                    "decomposition": {
-                        df.columns[j]: [round(float(v) * 100, 2) for v in decomp[:, j]]
-                        for j in range(len(df.columns))
-                    },
-                }
+            n_vars = len(df.columns)
+
+            for i in range(n_vars):
+                col = df.columns[i]
+                try:
+                    # fevd.decomp shape: (n_vars, periods, n_vars)
+                    decomp = fevd.decomp[i]
+
+                    fevd_data[col] = {
+                        "periods": list(range(1, irf_periods + 1)),
+                        "decomposition": {},
+                    }
+
+                    for j in range(n_vars):
+                        contrib_name = df.columns[j]
+                        values = []
+                        for t in range(decomp.shape[0]):
+                            values.append(round(float(decomp[t][j]) * 100, 2))
+                        fevd_data[col]["decomposition"][contrib_name] = values
+
+                except (IndexError, TypeError) as fe:
+                    fevd_data[col] = {"error": str(fe)}
+
             result["fevd"] = fevd_data
         except Exception as e:
             result["fevd"] = {"error": str(e)}
@@ -578,7 +646,7 @@ class EconometricsService:
     # ═══════════════════════════════════════════
 
     def ardl_bounds_test(
-        self, dependent: dict, independents: List[dict], params: dict = {}
+        self, dependent: dict, independents: List[dict], params: dict={}
     ) -> dict:
         """
         ARDL (Autoregressive Distributed Lag) Sınır Testi
@@ -682,7 +750,7 @@ class EconometricsService:
     #  6. ARCH / GARCH MODELLERİ
     # ═══════════════════════════════════════════
 
-    def garch_analysis(self, series_data: dict, params: dict = {}) -> dict:
+    def garch_analysis(self, series_data: dict, params: dict={}) -> dict:
         """
         ARCH/GARCH volatilite modelleme.
 
@@ -815,7 +883,7 @@ class EconometricsService:
     #  7. KORELASYON MATRİSİ (GELİŞMİŞ)
     # ═══════════════════════════════════════════
 
-    def advanced_correlation(self, series_list: List[dict], params: dict = {}) -> dict:
+    def advanced_correlation(self, series_list: List[dict], params: dict={}) -> dict:
         """
         Gelişmiş korelasyon analizi:
         - Pearson, Spearman, Kendall
@@ -916,7 +984,7 @@ class EconometricsService:
     #  8. TANIMLAYICI İSTATİSTİK (TEZ TABLOSU)
     # ═══════════════════════════════════════════
 
-    def thesis_descriptive_stats(self, series_list: List[dict], params: dict = {}) -> dict:
+    def thesis_descriptive_stats(self, series_list: List[dict], params: dict={}) -> dict:
         """
         Tez formatında tanımlayıcı istatistik tablosu.
         Jarque-Bera normallik testi dahil.
@@ -966,7 +1034,7 @@ class EconometricsService:
     # ═══════════════════════════════════════════
 
     def ols_regression(
-        self, dependent: dict, independents: List[dict], params: dict = {}
+        self, dependent: dict, independents: List[dict], params: dict={}
     ) -> dict:
         """
         OLS regresyon analizi.
@@ -1089,7 +1157,7 @@ class EconometricsService:
     # ═══════════════════════════════════════════
 
     def full_thesis_analysis(
-        self, series_list: List[dict], params: dict = {}
+        self, series_list: List[dict], params: dict={}
     ) -> dict:
         """
         Tez için tam analiz paketi:
