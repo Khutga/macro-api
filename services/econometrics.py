@@ -368,7 +368,7 @@ class EconometricsService:
         max_lag = params.get("max_lag", 4)
         significance = params.get("significance", 0.05)
 
-        if len(df) < max_lag + 20:
+        if len(df) < max_lag + 10:
             raise ValueError("Granger testi için yetersiz gözlem.")
 
         cols = df.columns.tolist()
@@ -468,7 +468,7 @@ class EconometricsService:
         max_lag = params.get("max_lag", 8)
         irf_periods = params.get("irf_periods", 12)
 
-        if len(df) < max_lag + 20:
+        if len(df) < max_lag + 10:
             raise ValueError("VAR modeli için yetersiz gözlem.")
 
         # Durağanlık kontrolü - gerekirse fark al
